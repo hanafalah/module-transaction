@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Hanafalah\LaravelHasProps\Concerns\HasProps;
 use Hanafalah\LaravelSupport\Models\BaseModel;
+use Hanafalah\ModuleTransaction\Resources\TransactionItem\{ViewTransactionItem,ShowTransactionItem};
 
 class TransactionItem extends BaseModel
 {
@@ -15,7 +16,16 @@ class TransactionItem extends BaseModel
     public $incrementing  = false;
     protected $keyType    = "string";
     protected $primaryKey = 'id';
-    protected $list       = ['id', 'transaction_id', 'item_type', 'item_id', 'item_name'];
+    protected $list       = [
+        'id', 
+        'transaction_id', 
+        'reference_type',
+        'reference_id',
+        'item_type', 
+        'item_id', 
+        'name',
+        'props'
+    ];
     protected $show       = ['parent_id'];
 
     protected static function booted(): void
@@ -23,38 +33,45 @@ class TransactionItem extends BaseModel
         parent::booted();
         static::created(function ($query) {
             $item = $query->item;
-            if (
-                static::isInArray('is_settled', $item) ||
-                static::isInArray('props', $item)
-            ) {
-                $item->is_settled = false;
-                $item->save();
+            if (isset($item)){
+                if (
+                    static::isInArray('is_settled', $item) ||
+                    static::isInArray('props', $item)
+                ) {
+                    $item->is_settled = false;
+                    $item->save();
+                }
             }
         });
         static::deleted(function ($query) {
-            $query->paymentDetail->delete();
+            if ($this->PaymentDetailModel() !== null){
+                $query->paymentDetail->delete();
+            }
         });
     }
 
-    private static function isInArray(string $column, Model $model)
-    {
+    public function viewUsingRelation(){
+        return ['paymentDetail'];
+    }
+
+    public function showUsingRelation(){
+        return ['paymentDetail'];
+    }
+
+    public function getViewResource(){
+        return ViewTransactionItem::class;
+    }
+
+    public function getShowResource(){
+        return ShowTransactionItem::class;
+    }
+
+    private static function isInArray(string $column, Model $model){
         return in_array($column, $model->getFillable());
     }
 
-    public function reference()
-    {
-        return $this->morphTo();
-    }
-    public function transaction()
-    {
-        return $this->belongsToModel('Transaction');
-    }
-    public function item()
-    {
-        return $this->morphTo();
-    }
-    public function paymentDetail()
-    {
-        return $this->hasOneModel('PaymentDetail');
-    }
+    public function reference(){return $this->morphTo();}
+    public function transaction(){return $this->belongsToModel('Transaction');}
+    public function item(){return $this->morphTo();}
+    public function paymentDetail(){return $this->hasOneModel(config('module-transaction.payment_detail'));}
 }

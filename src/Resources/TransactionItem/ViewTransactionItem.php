@@ -17,12 +17,18 @@ class ViewTransactionItem extends ApiResource
     {
         $arr = [
             'id'              => $this->id,
+            'name'            => $this->name,
             'transaction_id'  => $this->transaction_id,
             'item_type'       => $this->item_type,
             'item_id'         => $this->item_id,
-            'item_name'       => $this->item_name
+            'payment_detail'  => $this->relationValidation('paymentDetail',function(){
+                return $this->paymentDetail->toViewApi()->resolve();
+            }),
+            'item'            => $this->relationValidation('item', function () {
+                return $this->item->toShowApi()->resolve();
+            },$this->prop_item),
+            'dynamic_forms' => $this->dynamic_forms,
         ];
-
         return $arr;
     }
 }

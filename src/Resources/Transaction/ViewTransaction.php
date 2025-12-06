@@ -19,32 +19,14 @@ class ViewTransaction extends ApiResource
             'id'                => $this->id,
             'uuid'              => $this->uuid,
             'transaction_code'  => $this->transaction_code,
+            'consument'         => $this->prop_consument,
             'reference_type'    => $this->reference_type,
             'reference'         => $this->relationValidation('reference', function () {
-                $reference = $this->reference;
-                return $reference->toViewApi();
-            }),
-            // 'medic_service'     => $this->relationValidation('reference', function () {
-            //     $reference = $this->reference;
-            //     return $reference->relationValidation('visitRegistration', function () use ($reference) {
-            //         $visitRegistration = $reference->visitRegistration;
-            //         return [
-            //             'name'  => $visitRegistration->medic_service
-            //         ];
-            //     });
-            // }),
-            'payment_summary' => $this->relationValidation('paymentSummary', function () {
-                return $this->paymentSummary->toViewApi();
-                // return new ShowPaymentSummary($this->paymentSummary);
+                return $this->propNil($this->reference->toViewApi()->resolve(),'transaction');
             }),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at
         ];
-        $props = $this->getPropsData() ?? [];
-        foreach ($props as $key => $prop) {
-            $arr[$key] = $prop;
-        }
-
         return $arr;
     }
 }

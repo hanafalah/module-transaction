@@ -5,11 +5,9 @@ namespace Hanafalah\ModuleTransaction\Models\Transaction;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Hanafalah\LaravelHasProps\Concerns\HasProps;
+use Hanafalah\LaravelSupport\Concerns\Support\HasRequestData;
 use Hanafalah\LaravelSupport\Models\BaseModel;
-use Hanafalah\ModuleTransaction\Concerns\{
-    HasInvoice
-};
-use Hanafalah\ModuleTransaction\Enums\Transaction\TransactionStatus;
+use Hanafalah\ModuleTransaction\Enums\Transaction\Status;
 use Hanafalah\ModuleTransaction\Resources\Transaction\{
     ShowTransaction,
     ViewTransaction
@@ -17,105 +15,100 @@ use Hanafalah\ModuleTransaction\Resources\Transaction\{
 
 class Transaction extends BaseModel
 {
-    use HasUlids, HasProps, HasInvoice, SoftDeletes;
+    use HasUlids, HasProps, SoftDeletes, HasRequestData;
 
     public $incrementing  = false;
     protected $keyType    = "string";
     protected $list       = [
-        'id',
-        'uuid',
+        'id','uuid',
         'transaction_code',
         'reference_type',
         'reference_id',
         'status',
-        'created_at',
         'reported_at',
+        'journal_reported_at',
         'canceled_at'
     ];
-    protected $show       = ['parent_id', 'invoice_id', 'props'];
+    protected $show       = ['parent_id', 'props'];
     protected $primaryKey = 'id';
+    protected $casts = [
+        'reference_type' => 'string',
+        'reference_id' => 'string',
+        'journal_reported_at' => 'datetime',
+        'reported_at' => 'datetime',
+        'canceled_at' => 'datetime',
+        'name'        => 'string'
+    ];
 
-    protected static function booted(): void
-    {
+    public function getPropsQuery(): array{
+        return [
+            'name' => 'props->prop_reference->name'
+        ];
+    }
+
+    protected static function booted(): void{
         parent::booted();
         static::creating(function ($query) {
-            if (!isset($query->transaction_code)) {
-                $query->transaction_code = static::hasEncoding('TRANSACTION');
+            $query->transaction_code ??= static::hasEncoding('TRANSACTION');
+            $query->status ??= self::getTransactionStatus(Status::ACTIVE->value);
+        });
+        static::updated(function($query){
+            $query->load('reference');
+            $reference = $query->reference;
+            if (
+                isset($reference) &&
+                method_exists($reference, 'isHasJournalEntry') &&
+                $reference->isHasJournalEntry() &&
+                $query->isJournalReported()
+            ){
+                $reference = app(config('database.models.'.$query->reference_type))->find($query->reference_id);
+
+                app(config('app.contracts.JournalEntry'))->prepareStoreJournalEntry(
+                    $query->requestDTO(config('app.contracts.JournalEntryData'),[
+                        'transaction_reference_id' => $query->getKey(),
+                        'reference_type' => $query->reference_type,
+                        'reference_id'   => $query->reference_id,
+                        'name'           => $reference->name ?? null
+                    ])
+                );
             }
-            $query->status = TransactionStatus::ACTIVE->value;
         });
     }
 
-    public function toShowApi()
-    {
-        return new ShowTransaction($this);
+    public static function getTransactionStatus(string $status){
+        return Status::from($status)->value;
     }
 
-    public function toViewApi()
-    {
-        return new ViewTransaction($this);
+    public function isJournalReported():bool{
+        return $this->isDirty('journal_reported_at');
     }
 
-    public function reference()
-    {
-        return $this->morphTo();
-    }
-    public function billing()
-    {
-        return $this->hasOneModel('Billing');
-    }
-    public function paymentHistory()
-    {
-        return $this->hasOneModel('PaymentHistory');
-    }
-    public function paymentSummary()
-    {
-        return $this->hasOneModel('PaymentSummary');
-    }
-    public function paymentSummaries()
-    {
-        return $this->hasManyModel('PaymentSummary');
-    }
-    public function transactionItem()
-    {
-        return $this->hasOneModel('TransactionItem');
-    }
-    public function transactionItems()
-    {
-        return $this->hasManyModel('TransactionItem');
-    }
-    public function voucherTransaction()
-    {
-        return $this->hasOneModel('VoucherTransaction', 'ref_transaction_id');
-    }
-    public function voucherTransactions()
-    {
-        return $this->hasManyModel('VoucherTransaction', 'ref_transaction_id');
-    }
-    public function transactionHasConsument()
-    {
-        return $this->hasOneModel('TransactionHasConsument');
-    }
-    public function consuments()
-    {
-        return $this->belongsToManyModel('Consument', 'TransactionHasConsument');
+    public function viewUsingRelation(): array{
+        return [];
     }
 
-    public function consument()
-    {
-        $consument_table           = $this->ConsumentModel()->getTable();
-        $transaction_has_consument = $this->TransactionHasConsumentModel()->getTable();
+    public function showUsingRelation(): array{
+        return ['reference','transactionItems'];
+    }
+
+    public function getViewResource(){return ViewTransaction::class;}
+    public function getShowResource(){return ShowTransaction::class;}
+    public function reference(){return $this->morphTo()->withoutGlobalScopes();}    
+    public function paymentSummaries(){return $this->hasManyModel(config('module-transaction.payment_summary'));}
+    public function paymentDetails(){return $this->hasManyModel(config('module-transaction.payment_detail'));}
+    public function transactionItems(){return $this->hasManyModel('TransactionItem');}    
+    public function transactionHasConsument(){return $this->hasOneModel('TransactionHasConsument');}
+    public function consument(){
+        $consument_model = $this->ConsumentModel();
+        $transaction_consument = $this->TransactionHasConsumentModel();
         return $this->hasOneThroughModel(
             'Consument',
             'TransactionHasConsument',
             $this->getForeignKey(),
-            $this->ConsumentModel()->getKeyName(),
+            $consument_model->getKeyName(),
             $this->getKeyName(),
-            $this->ConsumentModel()->getForeignKey()
-        )->select([
-            "$consument_table.*",
-            "$transaction_has_consument.*",
-            "$consument_table.id as id"
-        ]);
+            $consument_model->getForeignKey()
+        )->select($transaction_consument->getTable().'.*',$consument_model->getTable().'.*', $consument_model->getTable().'.id as id');
     }
+    public function journalEntry(){return $this->hasOneModel('JournalEntry','transaction_reference_id');}
 }
